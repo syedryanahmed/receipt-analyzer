@@ -181,25 +181,89 @@ def answer_query(query):
     c = conn.cursor()
     q = query.lower()
     now = datetime.now()
+    answer = None
+    # Monthly total
     if 'this month' in q or 'current month' in q:
         month = now.strftime('%Y-%m')
         c.execute("SELECT SUM(total) FROM receipts WHERE user_id=? AND date LIKE ?", (USER_ID, f'{month}%'))
         total = c.fetchone()[0]
         answer = f"Total spent this month: ${total:.2f}" if total else "No receipts for this month."
+    # Vendor-specific
     elif 'from' in q or 'at' in q:
         for word in ['from', 'at']:
             if word in q:
                 vendor = q.split(word)[-1].strip().split()[0]
-                c.execute("SELECT date, total FROM receipts WHERE user_id=? AND store LIKE ?", (USER_ID, f'%{vendor}%'))
+                c.execute("SELECT date, total, id FROM receipts WHERE user_id=? AND store LIKE ?", (USER_ID, f'%{vendor}%'))
                 rows = c.fetchall()
                 if rows:
                     total = sum([r[1] for r in rows if r[1]])
                     answer = f"Total spent at {vendor.title()}: ${total:.2f}\n" + "\n".join([f"{r[0]}: ${r[1]:.2f}" for r in rows])
+                    # List items for this vendor
+                    item_lines = []
+                    for r in rows:
+                        c.execute("SELECT name, price FROM items WHERE user_id=? AND receipt_id=?", (USER_ID, r[2]))
+                        items = c.fetchall()
+                        if items:
+                            item_lines.append(f"Items for {r[0]}: " + ", ".join([f"{i[0]} (${i[1]:.2f})" for i in items]))
+                    if item_lines:
+                        answer += "\n" + "\n".join(item_lines)
                 else:
                     answer = f"No receipts found for {vendor.title()}."
                 break
             else:
                 answer = "No matching vendor found."
+    # List all items from last receipt
+    elif 'last receipt' in q or 'latest receipt' in q:
+        c.execute("SELECT id, store, date FROM receipts WHERE user_id=? ORDER BY date DESC LIMIT 1", (USER_ID,))
+        row = c.fetchone()
+        if row:
+            c.execute("SELECT name, price FROM items WHERE user_id=? AND receipt_id=?", (USER_ID, row[0]))
+            items = c.fetchall()
+            if items:
+                answer = f"Items from your last receipt ({row[2]} - {row[1]}):\n" + "\n".join([f"{i[0]}: ${i[1]:.2f}" for i in items])
+            else:
+                answer = "No items found for your last receipt."
+        else:
+            answer = "No receipts found."
+    # What did I buy at [vendor]?
+    elif 'what did i buy at' in q:
+        vendor = q.split('what did i buy at')[-1].strip().split()[0]
+        c.execute("SELECT id, date FROM receipts WHERE user_id=? AND store LIKE ? ORDER BY date DESC", (USER_ID, f'%{vendor}%'))
+        rows = c.fetchall()
+        if rows:
+            all_items = []
+            for r in rows:
+                c.execute("SELECT name, price FROM items WHERE user_id=? AND receipt_id=?", (USER_ID, r[0]))
+                items = c.fetchall()
+                if items:
+                    all_items.extend([f"{i[0]} (${i[1]:.2f}) on {r[1]}" for i in items])
+            if all_items:
+                answer = f"Items bought at {vendor.title()}:\n" + "\n".join(all_items)
+            else:
+                answer = f"No items found for {vendor.title()}."
+        else:
+            answer = f"No receipts found for {vendor.title()}."
+    # How much did I spend on [item]?
+    elif 'how much did i spend on' in q:
+        item = q.split('how much did i spend on')[-1].strip().split()[0]
+        c.execute("SELECT SUM(price) FROM items WHERE user_id=? AND name LIKE ?", (USER_ID, f'%{item}%'))
+        total = c.fetchone()[0]
+        answer = f"Total spent on {item.title()}: ${total:.2f}" if total else f"No purchases found for {item.title()}."
+    # List all items
+    elif 'list all items' in q or 'show all items' in q:
+        c.execute("SELECT name, price, receipt_id FROM items WHERE user_id=?", (USER_ID,))
+        items = c.fetchall()
+        if items:
+            lines = []
+            for i in items:
+                c.execute("SELECT store, date FROM receipts WHERE user_id=? AND id=?", (USER_ID, i[2]))
+                r = c.fetchone()
+                if r:
+                    lines.append(f"{i[0]}: ${i[1]:.2f} ({r[1]} - {r[0]})")
+            answer = "All items:\n" + "\n".join(lines)
+        else:
+            answer = "No items found."
+    # Category/month
     elif 'grocer' in q or 'supermarket' in q or 'food' in q:
         month = None
         for m in ['january','february','march','april','may','june','july','august','september','october','november','december']:
@@ -216,10 +280,12 @@ def answer_query(query):
             c.execute("SELECT SUM(total) FROM receipts WHERE user_id=? AND (store LIKE ? OR store LIKE ? OR store LIKE ?)", (USER_ID, '%groc%', '%supermarket%', '%food%'))
             total = c.fetchone()[0]
             answer = f"Total groceries: ${total:.2f}" if total else "No grocery receipts found."
+    # Total
     elif 'total' in q or 'all' in q or 'everything' in q:
         c.execute("SELECT SUM(total) FROM receipts WHERE user_id=?", (USER_ID,))
         total = c.fetchone()[0]
         answer = f"Total spent: ${total:.2f}" if total else "No receipts found."
+    # List receipts
     elif 'list' in q or 'show' in q:
         c.execute("SELECT store, date, total FROM receipts WHERE user_id=? ORDER BY date DESC", (USER_ID,))
         rows = c.fetchall()
@@ -228,7 +294,7 @@ def answer_query(query):
         else:
             answer = "No receipts found."
     else:
-        answer = "Sorry, I couldn't understand your question. Try asking about totals, vendors, or months."
+        answer = "Sorry, I couldn't understand your question. Try asking about totals, vendors, items, or months."
     conn.close()
     return answer
 
@@ -267,12 +333,19 @@ if st.sidebar.button("Export Receipts to CSV"):
     with open(items_csv_path, "rb") as f:
         st.sidebar.download_button("Download Items CSV", f, file_name="items.csv")
 
-# Main: Receipts Table
+# --- Main: Receipts Table with Item Details ---
 st.subheader("Uploaded Receipts")
 receipts = get_receipts()
 if receipts:
     df = pd.DataFrame(receipts, columns=["ID", "Vendor", "Date", "Total"])
     st.dataframe(df, use_container_width=True)
+    for r in receipts:
+        with st.expander(f"Details for {r[2]} - {r[1]}: ${r[3]:.2f}"):
+            items = get_items_for_receipt(r[0])
+            if items:
+                st.write(pd.DataFrame(items, columns=["Item", "Price"]))
+            else:
+                st.write("No items found for this receipt.")
     del_id = st.selectbox("Select receipt to delete", ["None"] + [str(r[0]) for r in receipts], key="delete_select")
     if del_id != "None":
         if st.button("Delete Selected Receipt", key="delete_btn"):
@@ -288,9 +361,9 @@ if receipts:
 else:
     st.info("No receipts uploaded yet.")
 
-# --- Chat Interface ---
+# --- Enhanced Chat Interface ---
 st.subheader("💬 Ask about your receipts")
-user_query = st.text_input("Type your question (e.g. 'How much did I spend this month?')", key="chat_input")
+user_query = st.text_input("Type your question (e.g. 'How much did I spend this month? Or list all items')", key="chat_input")
 if st.button("Ask", key="chat_btn") and user_query:
     with st.spinner("Thinking..."):
         answer = answer_query(user_query)
