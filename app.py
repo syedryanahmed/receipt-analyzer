@@ -266,8 +266,7 @@ if receipts:
     if del_id != "None":
         if st.button("Delete Selected Receipt", key="delete_btn"):
             delete_receipt(int(del_id))
-            st.success("Receipt deleted.")
-            st.experimental_rerun()
+            st.success("Receipt deleted. Please refresh the page to see the update.")
     # Show items for selected receipt
     show_id = st.selectbox("Show items for receipt", ["None"] + [str(r[0]) for r in receipts], key="show_select")
     if show_id != "None":
