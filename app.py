@@ -240,16 +240,24 @@ st.caption(f"Your private session ID: {USER_ID[:8]}... (keep this tab open to ac
 # Sidebar: Upload
 st.sidebar.header("Upload Receipt")
 uploaded_file = st.sidebar.file_uploader("Upload JPG, PNG, or PDF", type=["jpg", "jpeg", "png", "pdf"])
+
+if uploaded_file and "last_uploaded_filename" not in st.session_state:
+    st.session_state["last_uploaded_filename"] = None
+
 if uploaded_file:
-    with st.spinner("Extracting data from receipt..."):
-        text = extract_text_from_file(uploaded_file)
-        if not text.strip():
-            st.sidebar.error("Could not extract any text from the uploaded file. Please try another receipt.")
-        else:
-            store, date, total, items = parse_receipt_text(text)
-            image_bytes = uploaded_file.read() if hasattr(uploaded_file, 'read') else None
-            insert_receipt(store, date, total, image_bytes, items)
-            st.sidebar.success(f"Receipt from {store} on {date} uploaded!")
+    if uploaded_file.name != st.session_state["last_uploaded_filename"]:
+        with st.spinner("Extracting data from receipt..."):
+            text = extract_text_from_file(uploaded_file)
+            if not text.strip():
+                st.sidebar.error("Could not extract any text from the uploaded file. Please try another receipt.")
+            else:
+                store, date, total, items = parse_receipt_text(text)
+                image_bytes = uploaded_file.read() if hasattr(uploaded_file, 'read') else None
+                insert_receipt(store, date, total, image_bytes, items)
+                st.sidebar.success(f"Receipt from {store} on {date} uploaded!")
+                st.session_state["last_uploaded_filename"] = uploaded_file.name
+else:
+    st.session_state["last_uploaded_filename"] = None
 
 # Sidebar: Export
 if st.sidebar.button("Export Receipts to CSV"):
