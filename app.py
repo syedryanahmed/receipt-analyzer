@@ -340,7 +340,8 @@ if receipts:
     df = pd.DataFrame(receipts, columns=["ID", "Vendor", "Date", "Total"])
     st.dataframe(df, use_container_width=True)
     for r in receipts:
-        with st.expander(f"Details for {r[2]} - {r[1]}: ${r[3]:.2f}"):
+        total_str = f"${r[3]:.2f}" if r[3] is not None else "N/A"
+        with st.expander(f"Details for {r[2]} - {r[1]}: {total_str}"):
             items = get_items_for_receipt(r[0])
             if items:
                 st.write(pd.DataFrame(items, columns=["Item", "Price"]))
