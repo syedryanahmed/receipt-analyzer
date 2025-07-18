@@ -21,6 +21,13 @@ USER_ID = st.session_state['user_id']
 def init_db():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
+    # Check if user_id column exists in receipts
+    c.execute("PRAGMA table_info(receipts)")
+    columns = [col[1] for col in c.fetchall()]
+    if 'user_id' not in columns:
+        c.execute("DROP TABLE IF EXISTS receipts")
+        c.execute("DROP TABLE IF EXISTS items")
+    # Now create tables with user_id
     c.execute('''CREATE TABLE IF NOT EXISTS receipts (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id TEXT,
